@@ -1,0 +1,7 @@
+{
+  "name": "OMR Scanner Pro",
+  "description": "AI-powered OMR sheet scanner that digitizes student results, extracts handwriting, and exports to CSV.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
