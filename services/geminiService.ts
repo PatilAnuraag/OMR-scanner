@@ -67,8 +67,8 @@ const schemaEduStats: Schema = {
     q9: { type: Type.STRING, description: "Q9: Vocational training (Yes/No/Maybe)" },
     q10: { type: Type.STRING, description: "Q10: Study abroad (Yes/No/Maybe)" },
     q11: { type: Type.STRING, description: "Q11: Preferred work style (e.g. Office, Remote)" },
-    q12: { type: Type.STRING, description: "Q12: Handwritten text (Subjects enjoy)" },
-    q13: { type: Type.STRING, description: "Q13: Handwritten text (Job not want)" },
+    q12: { type: Type.STRING, description: "Q12: Handwritten text (Subjects enjoy most & why)" },
+    q13: { type: Type.STRING, description: "Q13: Handwritten text (Job not want & why)" },
     q14: { type: Type.STRING, description: "Q14: Long study (Yes/No/Maybe)" },
     q15: { type: Type.STRING, description: "Q15: Choice if no constraints (Checkboxes/Handwritten)" },
     studentId: { type: Type.STRING, description: "Printed Sheet ID/Student ID" },
@@ -191,7 +191,8 @@ export const processOmrImage = async (
       return {
         data: {
           ...parsed.answers,
-          handwrittenStatement: parsed.handwrittenStatement,
+          // Ensure handwrittenStatement defaults to empty string if missing
+          handwrittenStatement: parsed.handwrittenStatement || "",
           studentId: parsed.studentId
         },
         confidenceScore: parsed.confidenceScore

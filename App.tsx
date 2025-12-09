@@ -106,10 +106,13 @@ const App: React.FC = () => {
           return val !== null && val !== undefined ? String(val) : '';
         });
         
+        // Safety check: ensure handwrittenStatement exists before calling replace
+        const safeStatement = (d.handwrittenStatement || "").replace(/"/g, '""');
+
         return [
           `"${d.studentId}"`,
           ...qValues,
-          `"${d.handwrittenStatement.replace(/"/g, '""')}"`,
+          `"${safeStatement}"`,
           `"${new Date(r.scannedAt).toLocaleString()}"`
         ];
       });
@@ -123,8 +126,9 @@ const App: React.FC = () => {
         // Generate Q1...Q15 values dynamically
         const qValues = Array.from({ length: 15 }, (_, i) => {
           const val = (d as any)[`q${i + 1}`];
-          // Ensure we handle quotes in string content for CSV validity
-          return val ? `"${val.replace(/"/g, '""')}"` : '""';
+          // Ensure we handle quotes in string content for CSV validity. 
+          // Use String(val) to handle cases where AI might return a number instead of string.
+          return val ? `"${String(val).replace(/"/g, '""')}"` : '""';
         });
 
         return [
