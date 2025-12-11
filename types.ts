@@ -12,7 +12,7 @@ export interface StudentInfoData {
   date: string;
   grade: string;
   city: string;
-  whatsappNumber: string;
+  contactNumber: string;
   email: string;
   studentId: string;
 }

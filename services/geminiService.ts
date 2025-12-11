@@ -15,12 +15,12 @@ const schemaStudentInfo: Schema = {
     date: { type: Type.STRING, description: "Date in YYYY-MM-DD format" },
     grade: { type: Type.STRING, description: "Grade in 'Class X' format (e.g. Class 9)" },
     city: { type: Type.STRING, description: "City name" },
-    whatsappNumber: { type: Type.STRING, description: "Handwritten phone number written to the right of the bubble grid" },
+    contactNumber: { type: Type.STRING, description: "Handwritten phone number to the right of the bubble grid. Empty string if missing." },
     email: { type: Type.STRING, description: "Parent Email ID" },
     studentId: { type: Type.STRING, description: "Printed Sheet ID/Student ID (e.g. 100255)" },
     confidenceScore: { type: Type.NUMBER, description: "Confidence 0-1" }
   },
-  required: ["firstName", "lastName", "whatsappNumber", "studentId", "confidenceScore"]
+  required: ["firstName", "lastName", "contactNumber", "studentId", "confidenceScore"]
 };
 
 const schemaVibeMatch: Schema = {
@@ -102,10 +102,11 @@ export const processOmrImage = async (
       4. Grade/Class: Read class (e.g., 'Class 10').
       5. City: Read city.
       
-      6. PARENT WHATSAPP NUMBER (CRITICAL):
-         - Look to the RIGHT of the "Parent WhatsApp Number" bubble grid (D1-D10).
-         - Read the large handwritten 10-digit number written there.
-         - DO NOT read the bubbles.
+      6. CONTACT NUMBER:
+         - IGNORE the bubble grid (D1-D10).
+         - Look strictly for a handwritten 10-digit number written to the RIGHT of the bubble grid.
+         - If a handwritten number exists, extract it.
+         - If NO handwritten number is visible, return an empty string "".
       
       7. Parent Email ID: Read handwritten email.
       
@@ -169,7 +170,7 @@ export const processOmrImage = async (
           responseMimeType: "application/json",
           responseSchema: responseSchema,
           temperature: 0.1,
-          thinkingConfig: { thinkingBudget: 2048 }, // Enable thinking for better accuracy especially for bubble counting
+          thinkingConfig: { thinkingBudget: 2048 }, // Enable thinking for better accuracy
         },
       });
 

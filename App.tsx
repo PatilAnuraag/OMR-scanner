@@ -102,7 +102,7 @@ const App: React.FC = () => {
     let rows: (string[] | null)[] = [];
 
     if (activeTab === PageType.STUDENT_INFO) {
-      headers = ["Student ID", "First Name", "Last Name", "Parent Name", "School", "Date", "Grade", "City", "Mobile No", "Email", "Scanned At"];
+      headers = ["Student ID", "First Name", "Last Name", "Parent Name", "School", "Date", "Grade", "City", "Contact", "Email", "Scanned At"];
       rows = currentRecords.map(r => {
         try {
           const d = r.data as StudentInfoData;
@@ -116,7 +116,7 @@ const App: React.FC = () => {
             escapeCsv(d.date),
             escapeCsv(d.grade),
             escapeCsv(d.city),
-            escapeCsv(d.whatsappNumber),
+            escapeCsv(d.contactNumber),
             escapeCsv(d.email),
             escapeCsv(new Date(r.scannedAt).toLocaleString())
           ];
