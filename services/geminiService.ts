@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { PageType, StudentRecord } from "../types";
+import { PageType } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -151,7 +151,7 @@ export const processOmrImage = async (
       Q5: Rank in class (Bubble).
       Q6: Extracurriculars (Checkboxes - list all checked, comma separated).
       Q7: Family Careers (Checkboxes - list all checked, comma separated).
-      Q8: Handwritten text (Careers 'good' or 'discouraged').
+      Q8: Handwritten text (Careers good/discouraged).
       Q9: Vocational training (Bubble).
       Q10: Study abroad (Bubble).
       Q11: Preferred work style (Bubble).
@@ -182,11 +182,13 @@ export const processOmrImage = async (
           responseMimeType: "application/json",
           responseSchema: responseSchema,
           temperature: 0.1,
+          thinkingConfig: { thinkingBudget: 2048 }, // Enable thinking for better accuracy especially for bubble counting
         },
       });
 
-      const text = response.text;
-      if (!text) throw new Error("No response from AI");
+      let text = response.text || "{}";
+      // Sanitize potential markdown code blocks
+      text = text.replace(/^```json\s*/, '').replace(/\s*```$/, '');
       
       const parsed = JSON.parse(text);
 

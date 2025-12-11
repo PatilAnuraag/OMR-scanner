@@ -3,6 +3,14 @@ import { processOmrImage } from './services/geminiService';
 import { StudentRecord, ScanStatus, PageType, StudentInfoData, EduStatsData, VibeMatchData } from './types';
 import ScanList from './components/ScanList';
 
+const escapeCsv = (val: any): string => {
+  if (val === null || val === undefined) return '""';
+  const str = String(val);
+  // If value contains quotes, commas, or newlines, it must be quoted.
+  // We just quote everything for safety, escaping existing quotes.
+  return `"${str.replace(/"/g, '""')}"`;
+};
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<PageType>(PageType.STUDENT_INFO);
   const [records, setRecords] = useState<StudentRecord[]>([]);
@@ -18,7 +26,7 @@ const App: React.FC = () => {
     setStatus(ScanStatus.SCANNING);
     setErrorMsg(null);
 
-    const fileList = Array.from(files);
+    const fileList: File[] = Array.from(files);
     let failCount = 0;
 
     // Helper to read file as base64
@@ -76,6 +84,12 @@ const App: React.FC = () => {
     setRecords(prev => prev.filter(r => r.id !== id));
   };
 
+  const clearAllRecords = () => {
+    if (confirm("Are you sure you want to delete all scanned records for " + activeTab + "?")) {
+      setRecords(prev => prev.filter(r => r.pageType !== activeTab));
+    }
+  };
+
   const updateRecord = (id: string, newData: any) => {
     setRecords(prev => prev.map(r => r.id === id ? { ...r, data: newData } : r));
   };
@@ -94,8 +108,17 @@ const App: React.FC = () => {
           const d = r.data as StudentInfoData;
           if (!d) return null;
           return [
-            `"${d.studentId || ''}"`, `"${d.firstName || ''}"`, `"${d.lastName || ''}"`, `"${d.parentName || ''}"`, `"${d.schoolName || ''}"`, `"${d.date || ''}"`, `"${d.grade || ''}"`, `"${d.city || ''}"`, 
-            `"${d.whatsappNumber || ''}"`, `"${d.email || ''}"`, `"${new Date(r.scannedAt).toLocaleString()}"`
+            escapeCsv(d.studentId),
+            escapeCsv(d.firstName),
+            escapeCsv(d.lastName),
+            escapeCsv(d.parentName),
+            escapeCsv(d.schoolName),
+            escapeCsv(d.date),
+            escapeCsv(d.grade),
+            escapeCsv(d.city),
+            escapeCsv(d.whatsappNumber),
+            escapeCsv(d.email),
+            escapeCsv(new Date(r.scannedAt).toLocaleString())
           ];
         } catch (error) {
           console.error("Error generating row:", error);
@@ -115,21 +138,14 @@ const App: React.FC = () => {
           // Generate Q1...Q14 values dynamically
           const qValues = Array.from({ length: 14 }, (_, i) => {
             const val = (d as any)[`q${i + 1}`];
-            return val !== null && val !== undefined ? String(val) : '';
+            return escapeCsv(val);
           });
           
-          // Safety check: force to string to avoid undefined.replace errors
-          let statement = d.handwrittenStatement;
-          if (statement === undefined || statement === null) {
-            statement = "";
-          }
-          const safeStatement = String(statement).replace(/"/g, '""');
-
           return [
-            `"${d.studentId || ''}"`,
+            escapeCsv(d.studentId),
             ...qValues,
-            `"${safeStatement}"`,
-            `"${new Date(r.scannedAt).toLocaleString()}"`
+            escapeCsv(d.handwrittenStatement),
+            escapeCsv(new Date(r.scannedAt).toLocaleString())
           ];
         } catch (error) {
           console.error("Error generating row for Vibe Match:", error);
@@ -149,15 +165,13 @@ const App: React.FC = () => {
           // Generate Q1...Q15 values dynamically
           const qValues = Array.from({ length: 15 }, (_, i) => {
             const val = (d as any)[`q${i + 1}`];
-            // Ensure we handle quotes in string content for CSV validity. 
-            // Use String(val) to handle cases where AI might return a number instead of string.
-            return val ? `"${String(val).replace(/"/g, '""')}"` : '""';
+            return escapeCsv(val);
           });
 
           return [
-            `"${d.studentId || ''}"`,
+            escapeCsv(d.studentId),
             ...qValues,
-            `"${new Date(r.scannedAt).toLocaleString()}"`
+            escapeCsv(new Date(r.scannedAt).toLocaleString())
           ];
         } catch (error) {
            console.error("Error generating row for Edu Stats:", error);
@@ -219,6 +233,14 @@ const App: React.FC = () => {
             <h1 className="text-xl font-bold tracking-tight text-gray-900">OMR Scanner Pro</h1>
           </div>
           <div className="flex gap-2">
+             {activeRecordsCount > 0 && (
+                <button
+                  onClick={clearAllRecords}
+                  className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm bg-white text-red-600 hover:bg-red-50 focus:outline-none"
+                >
+                  Clear All
+                </button>
+             )}
              <button
                 onClick={copyToClipboard}
                 disabled={activeRecordsCount === 0}

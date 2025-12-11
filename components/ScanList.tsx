@@ -129,6 +129,12 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
     }
   };
 
+  const getConfidenceColor = (score: number) => {
+    if (score >= 0.9) return 'text-green-600';
+    if (score >= 0.7) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
   return (
     <div className="bg-white shadow-sm rounded-lg overflow-hidden border border-gray-200">
       <div className="overflow-x-auto">
@@ -136,6 +142,7 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
           <thead className="bg-gray-50">
             <tr>
               {renderHeaders()}
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Score</th>
               <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
@@ -143,6 +150,11 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
             {displayedRecords.map((record) => (
               <tr key={record.id} className="hover:bg-gray-50 transition-colors">
                 {renderRow(record)}
+                <td className="px-4 py-2 text-center whitespace-nowrap">
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getConfidenceColor(record.confidenceScore)} bg-opacity-10`}>
+                    {Math.round(record.confidenceScore * 100)}%
+                  </span>
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <button 
                     onClick={() => onDelete(record.id)}
