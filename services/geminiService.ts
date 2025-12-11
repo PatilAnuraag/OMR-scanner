@@ -15,7 +15,7 @@ const schemaStudentInfo: Schema = {
     date: { type: Type.STRING, description: "Date in YYYY-MM-DD format" },
     grade: { type: Type.STRING, description: "Grade in 'Class X' format (e.g. Class 9)" },
     city: { type: Type.STRING, description: "City name" },
-    whatsappNumber: { type: Type.STRING, description: "Phone number derived from filled bubbles in D1-D10 columns" },
+    whatsappNumber: { type: Type.STRING, description: "Handwritten phone number written to the right of the bubble grid" },
     email: { type: Type.STRING, description: "Parent Email ID" },
     studentId: { type: Type.STRING, description: "Printed Sheet ID/Student ID (e.g. 100255)" },
     confidenceScore: { type: Type.NUMBER, description: "Confidence 0-1" }
@@ -103,22 +103,9 @@ export const processOmrImage = async (
       5. City: Read city.
       
       6. PARENT WHATSAPP NUMBER (CRITICAL):
-         - Locate the bubble grid labeled "Parent WhatsApp Number".
-         - Columns are D1 to D10.
-         - DO NOT rely on reading the small numbers (0-9) next to bubbles as they may be blurry.
-         - Instead, determine the digit by COUNTING the position of the filled bubble from the top of the column:
-           * 1st bubble from top = 0
-           * 2nd bubble from top = 1
-           * 3rd bubble from top = 2
-           * 4th bubble from top = 3
-           * 5th bubble from top = 4
-           * 6th bubble from top = 5
-           * 7th bubble from top = 6
-           * 8th bubble from top = 7
-           * 9th bubble from top = 8
-           * 10th bubble from top = 9
-         - Perform this check for each column D1 to D10 independently.
-         - Concatenate the digits to form the 10-digit number.
+         - Look to the RIGHT of the "Parent WhatsApp Number" bubble grid (D1-D10).
+         - Read the large handwritten 10-digit number written there.
+         - DO NOT read the bubbles.
       
       7. Parent Email ID: Read handwritten email.
       
