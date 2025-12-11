@@ -146,7 +146,7 @@ export const processOmrImage = async (
       Extract answers for Q1 through Q15.
       Q1: Grade (Bubble).
       Q2: Board (Bubble).
-      Q3: Subjects (Checkboxes - list all checked, comma separated).
+      Q3: Subjects (Checkboxes - list all checked, comma separated if multiple).
       Q4: Recent Percentage (Bubble/Handwritten).
       Q5: Rank in class (Bubble).
       Q6: Extracurriculars (Checkboxes - list all checked, comma separated).
@@ -165,53 +165,76 @@ export const processOmrImage = async (
       break;
   }
 
-  try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: {
-        parts: [
-          { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } },
-          { text: systemPrompt },
-        ],
-      },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: responseSchema,
-        temperature: 0.1,
-      },
-    });
+  let retryCount = 0;
+  const maxRetries = 3;
 
-    const text = response.text;
-    if (!text) throw new Error("No response from AI");
-    
-    const parsed = JSON.parse(text);
-
-    // Normalize VibeMatch structure to match flat type if needed, or just return as is
-    if (pageType === PageType.VIBE_MATCH && parsed.answers) {
-      return {
-        data: {
-          ...parsed.answers,
-          // Ensure handwrittenStatement defaults to empty string if missing
-          handwrittenStatement: parsed.handwrittenStatement || "",
-          studentId: parsed.studentId
+  while (true) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelId,
+        contents: {
+          parts: [
+            { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } },
+            { text: systemPrompt },
+          ],
         },
-        confidenceScore: parsed.confidenceScore
-      };
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: responseSchema,
+          temperature: 0.1,
+        },
+      });
+
+      const text = response.text;
+      if (!text) throw new Error("No response from AI");
+      
+      const parsed = JSON.parse(text);
+
+      // Normalize VibeMatch structure to match flat type if needed, or just return as is
+      if (pageType === PageType.VIBE_MATCH && parsed.answers) {
+        return {
+          data: {
+            ...parsed.answers,
+            // Ensure handwrittenStatement defaults to empty string if missing
+            handwrittenStatement: parsed.handwrittenStatement || "",
+            studentId: parsed.studentId
+          },
+          confidenceScore: parsed.confidenceScore
+        };
+      }
+
+      // Fallback logic to ensure lastName is populated if AI missed it (though prompt handles it)
+      if (pageType === PageType.STUDENT_INFO) {
+         if (!parsed.lastName || parsed.lastName.trim() === '') {
+           parsed.lastName = parsed.firstName;
+         }
+      }
+
+      // For others, return directly (extracting confidence score out)
+      const { confidenceScore, ...rest } = parsed;
+
+      // Safety: ensure handwrittenStatement is present if VibeMatch, even in fallback path
+      if (pageType === PageType.VIBE_MATCH && rest.handwrittenStatement === undefined) {
+        rest.handwrittenStatement = "";
+      }
+
+      return { data: rest, confidenceScore };
+
+    } catch (error: any) {
+      const isRateLimit = error.message?.includes('429') || 
+                          error.message?.includes('RESOURCE_EXHAUSTED') || 
+                          error.status === 429;
+                          
+      if (isRateLimit && retryCount < maxRetries) {
+        retryCount++;
+        // Exponential backoff: 2s, 4s, 8s
+        const waitTime = Math.pow(2, retryCount) * 1000;
+        console.warn(`Gemini API Rate Limit hit. Retrying in ${waitTime}ms... (Attempt ${retryCount}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      } else {
+        console.error("Gemini Error:", error);
+        throw error;
+      }
     }
-
-    // Fallback logic to ensure lastName is populated if AI missed it (though prompt handles it)
-    if (pageType === PageType.STUDENT_INFO) {
-       if (!parsed.lastName || parsed.lastName.trim() === '') {
-         parsed.lastName = parsed.firstName;
-       }
-    }
-
-    // For others, return directly (extracting confidence score out)
-    const { confidenceScore, ...rest } = parsed;
-    return { data: rest, confidenceScore };
-
-  } catch (error) {
-    console.error("Gemini Error:", error);
-    throw error;
   }
 };

@@ -21,47 +21,50 @@ const App: React.FC = () => {
     const fileList = Array.from(files);
     let failCount = 0;
 
-    const processFile = (file: File): Promise<void> => {
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-          const base64Data = e.target?.result as string;
-          try {
-            const result = await processOmrImage(base64Data, activeTab);
-            
-            const newRecord: StudentRecord = {
-              id: crypto.randomUUID(),
-              scannedAt: new Date().toISOString(),
-              originalImageUrl: base64Data,
-              pageType: activeTab,
-              data: result.data,
-              confidenceScore: result.confidenceScore
-            };
-
-            setRecords(prev => [newRecord, ...prev]);
-          } catch (err) {
-            console.error(`Error processing file ${file.name}:`, err);
-            failCount++;
-          } finally {
-            resolve();
-          }
-        };
-        
-        reader.onerror = () => {
-          console.error(`Error reading file ${file.name}`);
-          failCount++;
-          resolve();
-        };
-
-        reader.readAsDataURL(file);
-      });
+    // Helper to read file as base64
+    const readFileAsBase64 = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
     };
 
-    await Promise.all(fileList.map(processFile));
+    // Process files sequentially to avoid rate limits
+    for (const file of fileList) {
+      try {
+        const base64Data = await readFileAsBase64(file);
+        const result = await processOmrImage(base64Data, activeTab);
+        
+        const newRecord: StudentRecord = {
+          id: crypto.randomUUID(),
+          scannedAt: new Date().toISOString(),
+          originalImageUrl: base64Data,
+          pageType: activeTab,
+          data: result.data,
+          confidenceScore: result.confidenceScore
+        };
+
+        setRecords(prev => [newRecord, ...prev]);
+        
+        // Add a small delay between requests to be gentle on the API
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+      } catch (err) {
+        console.error(`Error processing file ${file.name}:`, err);
+        failCount++;
+        // Continue to the next file even if this one failed
+      }
+    }
 
     if (failCount === fileList.length) {
       setStatus(ScanStatus.ERROR);
-      setErrorMsg("Failed to process images. Ensure you are scanning the correct page type.");
+      setErrorMsg("Failed to process images. All uploads failed. Please check your API quota.");
+    } else if (failCount > 0) {
+      // If some failed but some succeeded, we show success but maybe log a warning
+      console.warn(`${failCount} images failed to process.`);
+      setStatus(ScanStatus.SUCCESS);
     } else {
       setStatus(ScanStatus.SUCCESS);
     }
@@ -82,16 +85,22 @@ const App: React.FC = () => {
     if (currentRecords.length === 0) return null;
 
     let headers: string[] = [];
-    let rows: string[][] = [];
+    let rows: (string[] | null)[] = [];
 
     if (activeTab === PageType.STUDENT_INFO) {
       headers = ["Student ID", "First Name", "Last Name", "Parent Name", "School", "Date", "Grade", "City", "Mobile No", "Email", "Scanned At"];
       rows = currentRecords.map(r => {
-        const d = r.data as StudentInfoData;
-        return [
-          `"${d.studentId}"`, `"${d.firstName}"`, `"${d.lastName}"`, `"${d.parentName}"`, `"${d.schoolName}"`, `"${d.date}"`, `"${d.grade}"`, `"${d.city}"`, 
-          `"${d.whatsappNumber}"`, `"${d.email}"`, `"${new Date(r.scannedAt).toLocaleString()}"`
-        ];
+        try {
+          const d = r.data as StudentInfoData;
+          if (!d) return null;
+          return [
+            `"${d.studentId || ''}"`, `"${d.firstName || ''}"`, `"${d.lastName || ''}"`, `"${d.parentName || ''}"`, `"${d.schoolName || ''}"`, `"${d.date || ''}"`, `"${d.grade || ''}"`, `"${d.city || ''}"`, 
+            `"${d.whatsappNumber || ''}"`, `"${d.email || ''}"`, `"${new Date(r.scannedAt).toLocaleString()}"`
+          ];
+        } catch (error) {
+          console.error("Error generating row:", error);
+          return null;
+        }
       });
     } else if (activeTab === PageType.VIBE_MATCH) {
       // Generate Q1...Q14 headers dynamically
@@ -99,22 +108,33 @@ const App: React.FC = () => {
       headers = ["Student ID", ...qHeaders, "Q15 (Statement)", "Scanned At"];
       
       rows = currentRecords.map(r => {
-        const d = r.data as VibeMatchData;
-        // Generate Q1...Q14 values dynamically
-        const qValues = Array.from({ length: 14 }, (_, i) => {
-          const val = (d as any)[`q${i + 1}`];
-          return val !== null && val !== undefined ? String(val) : '';
-        });
-        
-        // Safety check: ensure handwrittenStatement exists before calling replace
-        const safeStatement = (d.handwrittenStatement || "").replace(/"/g, '""');
+        try {
+          const d = r.data as VibeMatchData;
+          if (!d) return null;
 
-        return [
-          `"${d.studentId}"`,
-          ...qValues,
-          `"${safeStatement}"`,
-          `"${new Date(r.scannedAt).toLocaleString()}"`
-        ];
+          // Generate Q1...Q14 values dynamically
+          const qValues = Array.from({ length: 14 }, (_, i) => {
+            const val = (d as any)[`q${i + 1}`];
+            return val !== null && val !== undefined ? String(val) : '';
+          });
+          
+          // Safety check: force to string to avoid undefined.replace errors
+          let statement = d.handwrittenStatement;
+          if (statement === undefined || statement === null) {
+            statement = "";
+          }
+          const safeStatement = String(statement).replace(/"/g, '""');
+
+          return [
+            `"${d.studentId || ''}"`,
+            ...qValues,
+            `"${safeStatement}"`,
+            `"${new Date(r.scannedAt).toLocaleString()}"`
+          ];
+        } catch (error) {
+          console.error("Error generating row for Vibe Match:", error);
+          return null;
+        }
       });
     } else if (activeTab === PageType.EDU_STATS) {
       // Generate Q1...Q15 headers
@@ -122,39 +142,55 @@ const App: React.FC = () => {
       headers = ["Student ID", ...qHeaders, "Scanned At"];
       
       rows = currentRecords.map(r => {
-        const d = r.data as EduStatsData;
-        // Generate Q1...Q15 values dynamically
-        const qValues = Array.from({ length: 15 }, (_, i) => {
-          const val = (d as any)[`q${i + 1}`];
-          // Ensure we handle quotes in string content for CSV validity. 
-          // Use String(val) to handle cases where AI might return a number instead of string.
-          return val ? `"${String(val).replace(/"/g, '""')}"` : '""';
-        });
+        try {
+          const d = r.data as EduStatsData;
+          if (!d) return null;
 
-        return [
-          `"${d.studentId}"`,
-          ...qValues,
-          `"${new Date(r.scannedAt).toLocaleString()}"`
-        ];
+          // Generate Q1...Q15 values dynamically
+          const qValues = Array.from({ length: 15 }, (_, i) => {
+            const val = (d as any)[`q${i + 1}`];
+            // Ensure we handle quotes in string content for CSV validity. 
+            // Use String(val) to handle cases where AI might return a number instead of string.
+            return val ? `"${String(val).replace(/"/g, '""')}"` : '""';
+          });
+
+          return [
+            `"${d.studentId || ''}"`,
+            ...qValues,
+            `"${new Date(r.scannedAt).toLocaleString()}"`
+          ];
+        } catch (error) {
+           console.error("Error generating row for Edu Stats:", error);
+           return null;
+        }
       });
     }
 
-    return [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const validRows = rows.filter((r): r is string[] => r !== null);
+    if (validRows.length === 0) return null;
+
+    return [headers.join(','), ...validRows.map(r => r.join(','))].join('\n');
   }, [records, activeTab]);
 
   const exportCSV = useCallback(() => {
     const csvContent = generateCSVData();
-    if (!csvContent) return;
+    if (!csvContent) {
+      if (records.filter(r => r.pageType === activeTab).length > 0) {
+        alert("Could not generate CSV data. Please check console for errors.");
+      }
+      return;
+    }
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.setAttribute("href", url);
-    link.setAttribute("download", `${activeTab.replace(/\s/g, '_')}_export.csv`);
+    const fileName = `${(activeTab || "export").replace(/\s/g, '_')}_export.csv`;
+    link.setAttribute("download", fileName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  }, [generateCSVData, activeTab]);
+  }, [generateCSVData, activeTab, records]);
 
   const copyToClipboard = useCallback(async () => {
     const csvContent = generateCSVData();
