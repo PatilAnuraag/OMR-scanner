@@ -8,8 +8,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const schemaStudentInfo: Schema = {
   type: Type.OBJECT,
   properties: {
-    firstName: { type: Type.STRING, description: "First Name" },
-    lastName: { type: Type.STRING, description: "Last Name (if single name, repeat First Name)" },
+    studentName: { type: Type.STRING, description: "Full Student Name read from the block letters" },
     parentName: { type: Type.STRING, description: "Parent / Guardian Name" },
     schoolName: { type: Type.STRING, description: "School Name" },
     date: { type: Type.STRING, description: "Date in YYYY-MM-DD format" },
@@ -20,7 +19,7 @@ const schemaStudentInfo: Schema = {
     studentId: { type: Type.STRING, description: "Printed Sheet ID/Student ID (e.g. 100255)" },
     confidenceScore: { type: Type.NUMBER, description: "Confidence 0-1" }
   },
-  required: ["firstName", "lastName", "contactNumber", "studentId", "confidenceScore"]
+  required: ["studentName", "contactNumber", "studentId", "confidenceScore"]
 };
 
 const schemaVibeMatch: Schema = {
@@ -96,7 +95,7 @@ export const processOmrImage = async (
       
       Task: Extract student data into JSON.
 
-      1. Student Name: Read block letters. Split into 'firstName' and 'lastName'.
+      1. Student Name: Read the full name from the block letters as 'studentName'.
       2. School Name: Read the handwritten school name.
       3. Date: Read date (YYYY-MM-DD).
       4. Grade/Class: Read class (e.g., 'Class 10').
@@ -193,10 +192,18 @@ export const processOmrImage = async (
         };
       }
 
-      // Fallback logic to ensure lastName is populated if AI missed it (though prompt handles it)
+      // Generate firstName and lastName from studentName for Page 1
       if (pageType === PageType.STUDENT_INFO) {
-         if (!parsed.lastName || parsed.lastName.trim() === '') {
-           parsed.lastName = parsed.firstName;
+         const fullName = (parsed.studentName || "").trim();
+         parsed.studentName = fullName; // normalize
+
+         const spaceIdx = fullName.indexOf(' ');
+         if (spaceIdx > 0) {
+             parsed.firstName = fullName.substring(0, spaceIdx);
+             parsed.lastName = fullName.substring(spaceIdx + 1);
+         } else {
+             parsed.firstName = fullName;
+             parsed.lastName = ""; // Leave last name empty if single name
          }
       }
 
@@ -217,8 +224,8 @@ export const processOmrImage = async (
                           
       if (isRateLimit && retryCount < maxRetries) {
         retryCount++;
-        // Exponential backoff: 2s, 4s, 8s
-        const waitTime = Math.pow(2, retryCount) * 1000;
+        // Exponential backoff with higher base: 4s, 8s, 16s
+        const waitTime = Math.pow(2, retryCount) * 2000; 
         console.warn(`Gemini API Rate Limit hit. Retrying in ${waitTime}ms... (Attempt ${retryCount}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {

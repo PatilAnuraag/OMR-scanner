@@ -7,7 +7,8 @@ export enum PageType {
 export interface StudentInfoData {
   firstName: string;
   lastName: string;
-  parentName: string; // Added field
+  studentName: string; // Added field for Full Name
+  parentName: string;
   schoolName: string;
   date: string;
   grade: string;

@@ -36,6 +36,7 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
         return (
           <>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Student ID</th>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Student Name</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">First Name</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Name</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Parent Name</th>
@@ -82,6 +83,7 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
         return (
           <>
             <td className="px-2 py-2 w-32"><EditableCell value={d.studentId} onChange={(v) => handleChange('studentId', v)} className="font-medium" /></td>
+            <td className="px-2 py-2 w-48"><EditableCell value={d.studentName} onChange={(v) => handleChange('studentName', v)} className="font-medium text-gray-900" /></td>
             <td className="px-2 py-2 w-32"><EditableCell value={d.firstName} onChange={(v) => handleChange('firstName', v)} /></td>
             <td className="px-2 py-2 w-32"><EditableCell value={d.lastName} onChange={(v) => handleChange('lastName', v)} /></td>
             <td className="px-2 py-2 w-40"><EditableCell value={d.parentName} onChange={(v) => handleChange('parentName', v)} /></td>

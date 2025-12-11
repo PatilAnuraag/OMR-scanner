@@ -17,6 +17,7 @@ const App: React.FC = () => {
   const [status, setStatus] = useState<ScanStatus>(ScanStatus.IDLE);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [progress, setProgress] = useState<{current: number, total: number} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -27,7 +28,8 @@ const App: React.FC = () => {
     setErrorMsg(null);
 
     const fileList: File[] = Array.from(files);
-    let failCount = 0;
+    const totalFiles = fileList.length;
+    setProgress({ current: 0, total: totalFiles });
 
     // Helper to read file as base64
     const readFileAsBase64 = (file: File): Promise<string> => {
@@ -39,8 +41,8 @@ const App: React.FC = () => {
         });
     };
 
-    // Process files sequentially to avoid rate limits
-    for (const file of fileList) {
+    // Define single file processor
+    const processFile = async (file: File): Promise<boolean> => {
       try {
         const base64Data = await readFileAsBase64(file);
         const result = await processOmrImage(base64Data, activeTab);
@@ -55,16 +57,23 @@ const App: React.FC = () => {
         };
 
         setRecords(prev => [newRecord, ...prev]);
-        
-        // Add a small delay between requests to be gentle on the API
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
+        return true;
       } catch (err) {
         console.error(`Error processing file ${file.name}:`, err);
-        failCount++;
-        // Continue to the next file even if this one failed
+        return false;
+      } finally {
+        setProgress(prev => {
+          if (!prev) return { current: 1, total: totalFiles };
+          return { ...prev, current: Math.min(prev.current + 1, totalFiles) };
+        });
       }
-    }
+    };
+
+    // Process all files in parallel
+    const results = await Promise.all(fileList.map(file => processFile(file)));
+    const failCount = results.filter(success => !success).length;
+
+    setProgress(null);
 
     if (failCount === fileList.length) {
       setStatus(ScanStatus.ERROR);
@@ -102,13 +111,15 @@ const App: React.FC = () => {
     let rows: (string[] | null)[] = [];
 
     if (activeTab === PageType.STUDENT_INFO) {
-      headers = ["Student ID", "First Name", "Last Name", "Parent Name", "School", "Date", "Grade", "City", "Contact", "Email", "Scanned At"];
+      // Updated headers to include Student Name
+      headers = ["Student ID", "Student Name", "First Name", "Last Name", "Parent Name", "School", "Date", "Grade", "City", "Contact", "Email", "Scanned At"];
       rows = currentRecords.map(r => {
         try {
           const d = r.data as StudentInfoData;
           if (!d) return null;
           return [
             escapeCsv(d.studentId),
+            escapeCsv(d.studentName), // Added Student Name
             escapeCsv(d.firstName),
             escapeCsv(d.lastName),
             escapeCsv(d.parentName),
@@ -329,7 +340,12 @@ const App: React.FC = () => {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
                 <p className="text-lg font-medium text-brand-700">Analyzing {activeTab}...</p>
-                <p className="text-sm text-brand-500 mt-1">Please wait while we process the images</p>
+                {progress && (
+                  <p className="text-base font-semibold text-brand-600 mt-2">
+                    Processing image {progress.current} of {progress.total}
+                  </p>
+                )}
+                <p className="text-sm text-brand-500 mt-1">Please wait, scanning sequentially to ensure accuracy</p>
               </div>
             ) : (
               <div className="flex flex-col items-center">
