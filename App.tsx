@@ -69,8 +69,28 @@ const App: React.FC = () => {
       }
     };
 
-    // Process all files in parallel
-    const results = await Promise.all(fileList.map(file => processFile(file)));
+    // Process files with concurrency limit
+    const CONCURRENCY_LIMIT = 5;
+    const results: boolean[] = [];
+    const activePromises = new Set<Promise<void>>();
+
+    for (const file of fileList) {
+        if (activePromises.size >= CONCURRENCY_LIMIT) {
+            await Promise.race(activePromises);
+        }
+
+        const promise = processFile(file).then((success) => {
+            results.push(success);
+        });
+        
+        activePromises.add(promise);
+        // Clean up promise from set when done
+        promise.then(() => activePromises.delete(promise));
+    }
+
+    // Wait for any remaining tasks
+    await Promise.all(activePromises);
+
     const failCount = results.filter(success => !success).length;
 
     setProgress(null);
