@@ -35,6 +35,7 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
       case PageType.STUDENT_INFO:
         return (
           <>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Group ID</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Student ID</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Student Name</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">First Name</th>
@@ -51,6 +52,7 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
       case PageType.VIBE_MATCH:
         return (
           <>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Group ID</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Student ID</th>
             {Array.from({ length: 14 }, (_, i) => i + 1).map(num => (
               <th key={num} className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase">Q{num}</th>
@@ -61,6 +63,7 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
       case PageType.EDU_STATS:
         return (
           <>
+            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Group ID</th>
             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Student ID</th>
             {Array.from({ length: 15 }, (_, i) => i + 1).map(num => (
               <th key={num} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Q{num}</th>
@@ -71,7 +74,10 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
   };
 
   const renderRow = (record: StudentRecord) => {
-    const { id, data } = record;
+    const { id, data, linkedGroupId } = record;
+    
+    // Display first 8 chars of UUID if present
+    const groupIdDisplay = linkedGroupId ? linkedGroupId.slice(0, 8) : '-';
     
     const handleChange = (field: string, val: string) => {
       onUpdate(id, { ...data, [field]: val });
@@ -82,6 +88,7 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
         const d = data as StudentInfoData;
         return (
           <>
+            <td className="px-4 py-2 text-xs text-gray-400 font-mono">{groupIdDisplay}</td>
             <td className="px-2 py-2 w-32"><EditableCell value={d.studentId} onChange={(v) => handleChange('studentId', v)} className="font-medium" /></td>
             <td className="px-2 py-2 w-48"><EditableCell value={d.studentName} onChange={(v) => handleChange('studentName', v)} className="font-medium text-gray-900" /></td>
             <td className="px-2 py-2 w-32"><EditableCell value={d.firstName} onChange={(v) => handleChange('firstName', v)} /></td>
@@ -100,6 +107,7 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
         const d = data as VibeMatchData;
         return (
           <>
+            <td className="px-4 py-2 text-xs text-gray-400 font-mono">{groupIdDisplay}</td>
             <td className="px-2 py-2 w-32"><EditableCell value={d.studentId} onChange={(v) => handleChange('studentId', v)} className="font-medium" /></td>
             {Array.from({ length: 14 }, (_, i) => i + 1).map(num => (
               <td key={num} className="px-1 py-2 text-center w-12">
@@ -118,6 +126,7 @@ const ScanList: React.FC<ScanListProps> = ({ records, activeType, onDelete, onUp
         const d = data as EduStatsData;
         return (
           <>
+            <td className="px-4 py-2 text-xs text-gray-400 font-mono">{groupIdDisplay}</td>
             <td className="px-2 py-2 w-32"><EditableCell value={d.studentId} onChange={(v) => handleChange('studentId', v)} className="font-medium" /></td>
             {Array.from({ length: 15 }, (_, i) => i + 1).map(num => (
               <td key={num} className="px-2 py-2 min-w-[120px]">

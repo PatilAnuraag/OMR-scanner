@@ -3,6 +3,13 @@ import { processOmrImage } from './services/geminiService';
 import { StudentRecord, ScanStatus, PageType, StudentInfoData, EduStatsData, VibeMatchData } from './types';
 import ScanList from './components/ScanList';
 
+// Add type definition for pdfjsLib on window
+declare global {
+  interface Window {
+    pdfjsLib: any;
+  }
+}
+
 const escapeCsv = (val: any): string => {
   if (val === null || val === undefined) return '""';
   const str = String(val);
@@ -18,6 +25,47 @@ const App: React.FC = () => {
   const [progress, setProgress] = useState<{current: number, total: number} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Helper to read PDF and convert to images
+  const convertPdfToImages = async (file: File): Promise<{ base64: string; groupId: string | null }[]> => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await window.pdfjsLib.getDocument(arrayBuffer).promise;
+        const totalPages = pdf.numPages;
+        const images: { base64: string; groupId: string | null }[] = [];
+        
+        // Group logic: We assume serial order. Page 1,2,3 belong to Student A. Page 4,5,6 to Student B.
+        // We generate a UUID for every chunk of 3 pages.
+        let currentGroupId = crypto.randomUUID();
+
+        for (let i = 1; i <= totalPages; i++) {
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 2.0 }); // Scale up for better OCR
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+
+          await page.render({ canvasContext: context, viewport: viewport }).promise;
+          const base64 = canvas.toDataURL('image/jpeg', 0.8);
+
+          // Update Group ID every 3 pages
+          // Index i is 1-based.
+          // 1,2,3 -> Group A
+          // 4,5,6 -> Group B
+          if (i > 1 && (i - 1) % 3 === 0) {
+             currentGroupId = crypto.randomUUID();
+          }
+
+          images.push({ base64, groupId: currentGroupId });
+        }
+        resolve(images);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -26,58 +74,92 @@ const App: React.FC = () => {
     setErrorMsg(null);
 
     const fileList: File[] = Array.from(files);
-    const totalFiles = fileList.length;
-    setProgress({ current: 0, total: totalFiles });
+    
+    // 1. Pre-process files (Convert PDFs to Images, keep Images as is)
+    // We create a unified queue of items to process.
+    let itemsToProcess: { base64: string; fileType: string; fileName: string; groupId: string | null }[] = [];
 
-    const readFileAsBase64 = (file: File): Promise<string> => {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-        });
-    };
+    try {
+      for (const file of fileList) {
+        if (file.type === 'application/pdf') {
+          // If PDF, extract all pages and apply serial grouping
+          const pdfImages = await convertPdfToImages(file);
+          pdfImages.forEach(img => {
+            itemsToProcess.push({
+               base64: img.base64,
+               fileType: 'pdf_page',
+               fileName: file.name,
+               groupId: img.groupId // PDF pages get a linked ID
+            });
+          });
+        } else {
+          // Normal Image
+          const readFileAsBase64 = (f: File): Promise<string> => {
+              return new Promise((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve(reader.result as string);
+                  reader.onerror = reject;
+                  reader.readAsDataURL(f);
+              });
+          };
+          const base64 = await readFileAsBase64(file);
+          itemsToProcess.push({
+            base64,
+            fileType: 'image',
+            fileName: file.name,
+            groupId: null // Individual images don't get auto-grouped unless we add logic later
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Error preparing files:", err);
+      setStatus(ScanStatus.ERROR);
+      setErrorMsg("Failed to read files (PDF conversion or image reading failed).");
+      return;
+    }
 
-    // Define single file processor
-    const processFile = async (file: File): Promise<boolean> => {
+    const totalItems = itemsToProcess.length;
+    setProgress({ current: 0, total: totalItems });
+
+    // 2. Process Queue
+    const processItem = async (item: typeof itemsToProcess[0]): Promise<boolean> => {
       try {
-        const base64Data = await readFileAsBase64(file);
-        // Pass activeTab - if it is MIX, service will auto-detect
-        const result = await processOmrImage(base64Data, activeTab);
+        const result = await processOmrImage(item.base64, activeTab);
         
         const newRecord: StudentRecord = {
           id: crypto.randomUUID(),
           scannedAt: new Date().toISOString(),
-          originalImageUrl: base64Data,
-          pageType: result.pageType, // Use the returned pageType (critical for Mix mode)
+          originalImageUrl: item.base64,
+          pageType: result.pageType,
           data: result.data,
-          confidenceScore: result.confidenceScore
+          confidenceScore: result.confidenceScore,
+          linkedGroupId: item.groupId || undefined // Store the group ID
         };
 
         setRecords(prev => [newRecord, ...prev]);
         return true;
       } catch (err) {
-        console.error(`Error processing file ${file.name}:`, err);
+        console.error(`Error processing item from ${item.fileName}:`, err);
         return false;
       } finally {
         setProgress(prev => {
-          if (!prev) return { current: 1, total: totalFiles };
-          return { ...prev, current: Math.min(prev.current + 1, totalFiles) };
+          if (!prev) return { current: 1, total: totalItems };
+          return { ...prev, current: Math.min(prev.current + 1, totalItems) };
         });
       }
     };
 
-    // Process files with concurrency limit
+    // Process with concurrency limit
     const CONCURRENCY_LIMIT = 5;
     const results: boolean[] = [];
     const activePromises = new Set<Promise<void>>();
 
-    for (const file of fileList) {
+    for (const item of itemsToProcess) {
         if (activePromises.size >= CONCURRENCY_LIMIT) {
             await Promise.race(activePromises);
         }
 
-        const promise = processFile(file).then((success) => {
+        const promise = processItem(item).then((success) => {
             results.push(success);
         });
         
@@ -88,14 +170,13 @@ const App: React.FC = () => {
     await Promise.all(activePromises);
 
     const failCount = results.filter(success => !success).length;
-
     setProgress(null);
 
-    if (failCount === fileList.length) {
+    if (failCount === totalItems) {
       setStatus(ScanStatus.ERROR);
-      setErrorMsg("Failed to process images. All uploads failed. Please check your API quota.");
+      setErrorMsg("Failed to process items. Please check your API quota.");
     } else if (failCount > 0) {
-      console.warn(`${failCount} images failed to process.`);
+      console.warn(`${failCount} items failed to process.`);
       setStatus(ScanStatus.SUCCESS);
     } else {
       setStatus(ScanStatus.SUCCESS);
@@ -119,8 +200,6 @@ const App: React.FC = () => {
   };
 
   const generateCSVData = useCallback(() => {
-    // If we are in MIX mode, we can't easily generate a single CSV.
-    // Ideally, user should switch to specific tab.
     if (activeTab === PageType.MIX) return null;
 
     const currentRecords = records.filter(r => r.pageType === activeTab);
@@ -129,13 +208,17 @@ const App: React.FC = () => {
     let headers: string[] = [];
     let rows: (string[] | null)[] = [];
 
+    // Add Group ID to headers
+    const commonHeaders = ["Linked Group ID"];
+
     if (activeTab === PageType.STUDENT_INFO) {
-      headers = ["Student ID", "Student Name", "First Name", "Last Name", "Parent Name", "School", "Date", "Grade", "City", "Contact", "Email", "Scanned At"];
+      headers = [...commonHeaders, "Student ID", "Student Name", "First Name", "Last Name", "Parent Name", "School", "Date", "Grade", "City", "Contact", "Email", "Scanned At"];
       rows = currentRecords.map(r => {
         try {
           const d = r.data as StudentInfoData;
           if (!d) return null;
           return [
+            escapeCsv(r.linkedGroupId || ""),
             escapeCsv(d.studentId),
             escapeCsv(d.studentName),
             escapeCsv(d.firstName),
@@ -153,7 +236,7 @@ const App: React.FC = () => {
       });
     } else if (activeTab === PageType.VIBE_MATCH) {
       const qHeaders = Array.from({ length: 14 }, (_, i) => `Q${i + 1}`);
-      headers = ["Student ID", ...qHeaders, "Q15 (Statement)", "Scanned At"];
+      headers = [...commonHeaders, "Student ID", ...qHeaders, "Q15 (Statement)", "Scanned At"];
       rows = currentRecords.map(r => {
         try {
           const d = r.data as VibeMatchData;
@@ -163,6 +246,7 @@ const App: React.FC = () => {
             return escapeCsv(val);
           });
           return [
+            escapeCsv(r.linkedGroupId || ""),
             escapeCsv(d.studentId),
             ...qValues,
             escapeCsv(d.handwrittenStatement),
@@ -172,7 +256,7 @@ const App: React.FC = () => {
       });
     } else if (activeTab === PageType.EDU_STATS) {
       const qHeaders = Array.from({ length: 15 }, (_, i) => `Q${i + 1}`);
-      headers = ["Student ID", ...qHeaders, "Scanned At"];
+      headers = [...commonHeaders, "Student ID", ...qHeaders, "Scanned At"];
       rows = currentRecords.map(r => {
         try {
           const d = r.data as EduStatsData;
@@ -182,6 +266,7 @@ const App: React.FC = () => {
             return escapeCsv(val);
           });
           return [
+            escapeCsv(r.linkedGroupId || ""),
             escapeCsv(d.studentId),
             ...qValues,
             escapeCsv(new Date(r.scannedAt).toLocaleString())
@@ -235,7 +320,6 @@ const App: React.FC = () => {
 
   const activeRecordsCount = records.filter(r => r.pageType === activeTab).length;
 
-  // Mix Dashboard Helper
   const getCount = (type: PageType) => records.filter(r => r.pageType === type).length;
 
   return (
@@ -268,7 +352,7 @@ const App: React.FC = () => {
               </button>
              <button
                 onClick={exportCSV}
-                disabled={activeRecordsCount === 0 && activeTab !== PageType.MIX} // Enable in MIX to show alert helper
+                disabled={activeRecordsCount === 0 && activeTab !== PageType.MIX}
                 className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white 
                   ${(activeRecordsCount === 0 && activeTab !== PageType.MIX) ? 'bg-gray-300 cursor-not-allowed' : 'bg-brand-600 hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500'}`}
               >
@@ -316,7 +400,7 @@ const App: React.FC = () => {
               type="file" 
               ref={fileInputRef} 
               className="hidden" 
-              accept="image/*"
+              accept="image/*,application/pdf"
               multiple
               onChange={handleFileUpload}
               disabled={status === ScanStatus.SCANNING}
@@ -329,14 +413,16 @@ const App: React.FC = () => {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
                 <p className="text-lg font-medium text-brand-700">
-                  {activeTab === PageType.MIX ? "Identifying & Analyzing..." : `Analyzing ${activeTab}...`}
+                  {activeTab === PageType.MIX ? "Extracting & Analyzing..." : `Analyzing ${activeTab}...`}
                 </p>
                 {progress && (
                   <p className="text-base font-semibold text-brand-600 mt-2">
-                    Processing image {progress.current} of {progress.total}
+                    Processing item {progress.current} of {progress.total}
                   </p>
                 )}
-                <p className="text-sm text-brand-500 mt-1">Please wait, performing AI recognition...</p>
+                <p className="text-sm text-brand-500 mt-1">
+                  Processing PDFs and images...
+                </p>
               </div>
             ) : (
               <div className="flex flex-col items-center">
@@ -344,11 +430,11 @@ const App: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 <span className="mt-2 block text-sm font-semibold text-gray-900">
-                  {activeTab === PageType.MIX ? "Upload Mixed Batch" : `Scan ${activeTab}`}
+                  {activeTab === PageType.MIX ? "Upload Mixed Batch or PDF" : `Scan ${activeTab}`}
                 </span>
                 <span className="mt-1 block text-sm text-gray-500">
                   {activeTab === PageType.MIX 
-                    ? "Upload any combination of Page 1, 2, or 3. We'll sort them automatically." 
+                    ? "Upload PDF (Serial P1-P2-P3) or mixed images. We'll sort and link them." 
                     : "Click to upload images or take photos"}
                 </span>
               </div>

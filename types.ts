@@ -65,6 +65,7 @@ export interface StudentRecord {
   confidenceScore: number;
   originalImageUrl?: string;
   scannedAt: string;
+  linkedGroupId?: string; // New: To link Page 1, 2, 3 together from a PDF
 }
 
 export enum ScanStatus {
