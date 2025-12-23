@@ -6,8 +6,6 @@ import ScanList from './components/ScanList';
 const escapeCsv = (val: any): string => {
   if (val === null || val === undefined) return '""';
   const str = String(val);
-  // If value contains quotes, commas, or newlines, it must be quoted.
-  // We just quote everything for safety, escaping existing quotes.
   return `"${str.replace(/"/g, '""')}"`;
 };
 
@@ -31,7 +29,6 @@ const App: React.FC = () => {
     const totalFiles = fileList.length;
     setProgress({ current: 0, total: totalFiles });
 
-    // Helper to read file as base64
     const readFileAsBase64 = (file: File): Promise<string> => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -45,13 +42,14 @@ const App: React.FC = () => {
     const processFile = async (file: File): Promise<boolean> => {
       try {
         const base64Data = await readFileAsBase64(file);
+        // Pass activeTab - if it is MIX, service will auto-detect
         const result = await processOmrImage(base64Data, activeTab);
         
         const newRecord: StudentRecord = {
           id: crypto.randomUUID(),
           scannedAt: new Date().toISOString(),
           originalImageUrl: base64Data,
-          pageType: activeTab,
+          pageType: result.pageType, // Use the returned pageType (critical for Mix mode)
           data: result.data,
           confidenceScore: result.confidenceScore
         };
@@ -84,11 +82,9 @@ const App: React.FC = () => {
         });
         
         activePromises.add(promise);
-        // Clean up promise from set when done
         promise.then(() => activePromises.delete(promise));
     }
 
-    // Wait for any remaining tasks
     await Promise.all(activePromises);
 
     const failCount = results.filter(success => !success).length;
@@ -99,14 +95,13 @@ const App: React.FC = () => {
       setStatus(ScanStatus.ERROR);
       setErrorMsg("Failed to process images. All uploads failed. Please check your API quota.");
     } else if (failCount > 0) {
-      // If some failed but some succeeded, we show success but maybe log a warning
       console.warn(`${failCount} images failed to process.`);
       setStatus(ScanStatus.SUCCESS);
     } else {
       setStatus(ScanStatus.SUCCESS);
     }
     
-    event.target.value = ''; // Reset input
+    event.target.value = '';
   };
 
   const deleteRecord = (id: string) => {
@@ -124,6 +119,10 @@ const App: React.FC = () => {
   };
 
   const generateCSVData = useCallback(() => {
+    // If we are in MIX mode, we can't easily generate a single CSV.
+    // Ideally, user should switch to specific tab.
+    if (activeTab === PageType.MIX) return null;
+
     const currentRecords = records.filter(r => r.pageType === activeTab);
     if (currentRecords.length === 0) return null;
 
@@ -131,7 +130,6 @@ const App: React.FC = () => {
     let rows: (string[] | null)[] = [];
 
     if (activeTab === PageType.STUDENT_INFO) {
-      // Updated headers to include Student Name
       headers = ["Student ID", "Student Name", "First Name", "Last Name", "Parent Name", "School", "Date", "Grade", "City", "Contact", "Email", "Scanned At"];
       rows = currentRecords.map(r => {
         try {
@@ -139,7 +137,7 @@ const App: React.FC = () => {
           if (!d) return null;
           return [
             escapeCsv(d.studentId),
-            escapeCsv(d.studentName), // Added Student Name
+            escapeCsv(d.studentName),
             escapeCsv(d.firstName),
             escapeCsv(d.lastName),
             escapeCsv(d.parentName),
@@ -151,63 +149,44 @@ const App: React.FC = () => {
             escapeCsv(d.email),
             escapeCsv(new Date(r.scannedAt).toLocaleString())
           ];
-        } catch (error) {
-          console.error("Error generating row:", error);
-          return null;
-        }
+        } catch (error) { return null; }
       });
     } else if (activeTab === PageType.VIBE_MATCH) {
-      // Generate Q1...Q14 headers dynamically
       const qHeaders = Array.from({ length: 14 }, (_, i) => `Q${i + 1}`);
       headers = ["Student ID", ...qHeaders, "Q15 (Statement)", "Scanned At"];
-      
       rows = currentRecords.map(r => {
         try {
           const d = r.data as VibeMatchData;
           if (!d) return null;
-
-          // Generate Q1...Q14 values dynamically
           const qValues = Array.from({ length: 14 }, (_, i) => {
             const val = (d as any)[`q${i + 1}`];
             return escapeCsv(val);
           });
-          
           return [
             escapeCsv(d.studentId),
             ...qValues,
             escapeCsv(d.handwrittenStatement),
             escapeCsv(new Date(r.scannedAt).toLocaleString())
           ];
-        } catch (error) {
-          console.error("Error generating row for Vibe Match:", error);
-          return null;
-        }
+        } catch (error) { return null; }
       });
     } else if (activeTab === PageType.EDU_STATS) {
-      // Generate Q1...Q15 headers
       const qHeaders = Array.from({ length: 15 }, (_, i) => `Q${i + 1}`);
       headers = ["Student ID", ...qHeaders, "Scanned At"];
-      
       rows = currentRecords.map(r => {
         try {
           const d = r.data as EduStatsData;
           if (!d) return null;
-
-          // Generate Q1...Q15 values dynamically
           const qValues = Array.from({ length: 15 }, (_, i) => {
             const val = (d as any)[`q${i + 1}`];
             return escapeCsv(val);
           });
-
           return [
             escapeCsv(d.studentId),
             ...qValues,
             escapeCsv(new Date(r.scannedAt).toLocaleString())
           ];
-        } catch (error) {
-           console.error("Error generating row for Edu Stats:", error);
-           return null;
-        }
+        } catch (error) { return null; }
       });
     }
 
@@ -220,7 +199,9 @@ const App: React.FC = () => {
   const exportCSV = useCallback(() => {
     const csvContent = generateCSVData();
     if (!csvContent) {
-      if (records.filter(r => r.pageType === activeTab).length > 0) {
+      if (activeTab === PageType.MIX) {
+        alert("Please switch to a specific Page tab (Page 1, 2, or 3) to export that specific data.");
+      } else if (records.filter(r => r.pageType === activeTab).length > 0) {
         alert("Could not generate CSV data. Please check console for errors.");
       }
       return;
@@ -239,8 +220,10 @@ const App: React.FC = () => {
 
   const copyToClipboard = useCallback(async () => {
     const csvContent = generateCSVData();
-    if (!csvContent) return;
-
+    if (!csvContent) {
+        if (activeTab === PageType.MIX) alert("Please switch to a specific Page tab to copy data.");
+        return;
+    }
     try {
       await navigator.clipboard.writeText(csvContent);
       setCopySuccess(true);
@@ -248,9 +231,12 @@ const App: React.FC = () => {
     } catch (err) {
       console.error('Failed to copy text: ', err);
     }
-  }, [generateCSVData]);
+  }, [generateCSVData, activeTab]);
 
   const activeRecordsCount = records.filter(r => r.pageType === activeTab).length;
+
+  // Mix Dashboard Helper
+  const getCount = (type: PageType) => records.filter(r => r.pageType === type).length;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-900">
@@ -264,7 +250,7 @@ const App: React.FC = () => {
             <h1 className="text-xl font-bold tracking-tight text-gray-900">OMR Scanner Pro</h1>
           </div>
           <div className="flex gap-2">
-             {activeRecordsCount > 0 && (
+             {activeRecordsCount > 0 && activeTab !== PageType.MIX && (
                 <button
                   onClick={clearAllRecords}
                   className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm bg-white text-red-600 hover:bg-red-50 focus:outline-none"
@@ -278,32 +264,15 @@ const App: React.FC = () => {
                 className={`inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm bg-white text-gray-700 
                   ${activeRecordsCount === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500'}`}
               >
-                {copySuccess ? (
-                  <>
-                    <svg className="mr-2 -ml-1 h-4 w-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    Copied!
-                  </>
-                ) : (
-                  <>
-                    <svg className="mr-2 -ml-1 h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                    </svg>
-                    Copy
-                  </>
-                )}
+                {copySuccess ? "Copied!" : "Copy"}
               </button>
              <button
                 onClick={exportCSV}
-                disabled={activeRecordsCount === 0}
+                disabled={activeRecordsCount === 0 && activeTab !== PageType.MIX} // Enable in MIX to show alert helper
                 className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white 
-                  ${activeRecordsCount === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-brand-600 hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500'}`}
+                  ${(activeRecordsCount === 0 && activeTab !== PageType.MIX) ? 'bg-gray-300 cursor-not-allowed' : 'bg-brand-600 hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500'}`}
               >
-                <svg className="mr-2 -ml-1 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Export CSV ({activeRecordsCount})
+                Export CSV {activeTab !== PageType.MIX && `(${activeRecordsCount})`}
               </button>
           </div>
         </div>
@@ -359,13 +328,15 @@ const App: React.FC = () => {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <p className="text-lg font-medium text-brand-700">Analyzing {activeTab}...</p>
+                <p className="text-lg font-medium text-brand-700">
+                  {activeTab === PageType.MIX ? "Identifying & Analyzing..." : `Analyzing ${activeTab}...`}
+                </p>
                 {progress && (
                   <p className="text-base font-semibold text-brand-600 mt-2">
                     Processing image {progress.current} of {progress.total}
                   </p>
                 )}
-                <p className="text-sm text-brand-500 mt-1">Please wait, scanning sequentially to ensure accuracy</p>
+                <p className="text-sm text-brand-500 mt-1">Please wait, performing AI recognition...</p>
               </div>
             ) : (
               <div className="flex flex-col items-center">
@@ -373,10 +344,12 @@ const App: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 <span className="mt-2 block text-sm font-semibold text-gray-900">
-                  Scan {activeTab}
+                  {activeTab === PageType.MIX ? "Upload Mixed Batch" : `Scan ${activeTab}`}
                 </span>
                 <span className="mt-1 block text-sm text-gray-500">
-                  Click to upload images or take photos
+                  {activeTab === PageType.MIX 
+                    ? "Upload any combination of Page 1, 2, or 3. We'll sort them automatically." 
+                    : "Click to upload images or take photos"}
                 </span>
               </div>
             )}
@@ -392,13 +365,36 @@ const App: React.FC = () => {
           )}
         </section>
 
-        {/* Results List */}
-        <ScanList 
-          records={records} 
-          activeType={activeTab} 
-          onDelete={deleteRecord}
-          onUpdate={updateRecord}
-        />
+        {/* Results Content */}
+        {activeTab === PageType.MIX ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[PageType.STUDENT_INFO, PageType.VIBE_MATCH, PageType.EDU_STATS].map((type) => {
+              const count = getCount(type);
+              return (
+                <div 
+                  key={type} 
+                  onClick={() => setActiveTab(type)}
+                  className="bg-white overflow-hidden shadow rounded-lg hover:shadow-md transition-shadow cursor-pointer border border-gray-200"
+                >
+                  <div className="px-4 py-5 sm:p-6">
+                    <dt className="text-sm font-medium text-gray-500 truncate">{type}</dt>
+                    <dd className="mt-1 text-3xl font-semibold text-gray-900">{count}</dd>
+                    <p className="mt-2 text-sm text-brand-600 hover:text-brand-800 font-medium">
+                      View Records &rarr;
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <ScanList 
+            records={records} 
+            activeType={activeTab} 
+            onDelete={deleteRecord}
+            onUpdate={updateRecord}
+          />
+        )}
         
       </main>
     </div>

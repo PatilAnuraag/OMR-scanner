@@ -2,6 +2,7 @@ export enum PageType {
   STUDENT_INFO = 'Page 1 (Info)',
   VIBE_MATCH = 'Page 2 (VibeMatch)',
   EDU_STATS = 'Page 3 (EduStats)',
+  MIX = 'Mix (Auto-Detect)',
 }
 
 export interface StudentInfoData {

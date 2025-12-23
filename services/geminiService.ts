@@ -2,6 +2,7 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { PageType } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const MODEL_ID = "gemini-2.5-flash";
 
 // --- Schemas ---
 
@@ -76,14 +77,76 @@ const schemaEduStats: Schema = {
   required: ["q1", "q2", "studentId", "confidenceScore"]
 };
 
+// --- Identification Helper ---
+
+const identifyPageType = async (base64Image: string): Promise<PageType> => {
+  const cleanBase64 = base64Image.replace(/^data:image\/(png|jpg|jpeg|webp);base64,/, "");
+  
+  const schemaIdentity: Schema = {
+    type: Type.OBJECT,
+    properties: {
+      type: { 
+        type: Type.STRING, 
+        enum: ["INFO", "VIBE", "EDU", "UNKNOWN"],
+        description: "The identified document type based on headers."
+      }
+    },
+    required: ["type"]
+  };
+
+  const prompt = `Look at the top header of this OMR sheet image and identify the type.
+  - If it contains "STUDENT INFORMATION", return "INFO".
+  - If it contains "VIBEMatch" or "SECTION 1", return "VIBE".
+  - If it contains "EduStats" or "SECTION 2", return "EDU".
+  - Otherwise return "UNKNOWN".`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: MODEL_ID,
+      contents: {
+        parts: [
+          { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } },
+          { text: prompt },
+        ],
+      },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: schemaIdentity,
+        temperature: 0.1,
+      },
+    });
+
+    const text = response.text || "{}";
+    const parsed = JSON.parse(text.replace(/^```json\s*/, '').replace(/\s*```$/, ''));
+    
+    switch (parsed.type) {
+      case "INFO": return PageType.STUDENT_INFO;
+      case "VIBE": return PageType.VIBE_MATCH;
+      case "EDU": return PageType.EDU_STATS;
+      default: throw new Error("Could not identify page type from image.");
+    }
+  } catch (error) {
+    console.error("Identification failed", error);
+    throw new Error("Failed to identify page type. Please upload to a specific tab.");
+  }
+};
+
 // --- Service Function ---
 
 export const processOmrImage = async (
   base64Image: string, 
   pageType: PageType
-): Promise<{ data: any, confidenceScore: number }> => {
+): Promise<{ data: any, confidenceScore: number, pageType: PageType }> => {
   
-  const modelId = "gemini-2.5-flash";
+  // 1. Handle MIX / Auto-Detection
+  if (pageType === PageType.MIX) {
+    const detectedType = await identifyPageType(base64Image);
+    console.log(`Auto-detected page type: ${detectedType}`);
+    // Recursively call with the specific type
+    return processOmrImage(base64Image, detectedType);
+  }
+
+  // 2. Process Specific Page Type
   const cleanBase64 = base64Image.replace(/^data:image\/(png|jpg|jpeg|webp);base64,/, "");
   
   let systemPrompt = "";
@@ -158,7 +221,7 @@ export const processOmrImage = async (
   while (true) {
     try {
       const response = await ai.models.generateContent({
-        model: modelId,
+        model: MODEL_ID,
         contents: {
           parts: [
             { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } },
@@ -169,33 +232,32 @@ export const processOmrImage = async (
           responseMimeType: "application/json",
           responseSchema: responseSchema,
           temperature: 0.1,
-          thinkingConfig: { thinkingBudget: 2048 }, // Enable thinking for better accuracy
+          thinkingConfig: { thinkingBudget: 2048 },
         },
       });
 
       let text = response.text || "{}";
-      // Sanitize potential markdown code blocks
       text = text.replace(/^```json\s*/, '').replace(/\s*```$/, '');
       
       const parsed = JSON.parse(text);
 
-      // Normalize VibeMatch structure to match flat type if needed, or just return as is
+      // Normalize VibeMatch
       if (pageType === PageType.VIBE_MATCH && parsed.answers) {
         return {
           data: {
             ...parsed.answers,
-            // Ensure handwrittenStatement defaults to empty string if missing
             handwrittenStatement: parsed.handwrittenStatement || "",
             studentId: parsed.studentId
           },
-          confidenceScore: parsed.confidenceScore
+          confidenceScore: parsed.confidenceScore,
+          pageType: pageType
         };
       }
 
       // Generate firstName and lastName from studentName for Page 1
       if (pageType === PageType.STUDENT_INFO) {
          const fullName = (parsed.studentName || "").trim();
-         parsed.studentName = fullName; // normalize
+         parsed.studentName = fullName; 
 
          const spaceIdx = fullName.indexOf(' ');
          if (spaceIdx > 0) {
@@ -203,19 +265,18 @@ export const processOmrImage = async (
              parsed.lastName = fullName.substring(spaceIdx + 1);
          } else {
              parsed.firstName = fullName;
-             parsed.lastName = ""; // Leave last name empty if single name
+             parsed.lastName = "";
          }
       }
 
-      // For others, return directly (extracting confidence score out)
       const { confidenceScore, ...rest } = parsed;
 
-      // Safety: ensure handwrittenStatement is present if VibeMatch, even in fallback path
+      // Safety
       if (pageType === PageType.VIBE_MATCH && rest.handwrittenStatement === undefined) {
         rest.handwrittenStatement = "";
       }
 
-      return { data: rest, confidenceScore };
+      return { data: rest, confidenceScore, pageType: pageType };
 
     } catch (error: any) {
       const isRateLimit = error.message?.includes('429') || 
@@ -224,7 +285,6 @@ export const processOmrImage = async (
                           
       if (isRateLimit && retryCount < maxRetries) {
         retryCount++;
-        // Exponential backoff with higher base: 4s, 8s, 16s
         const waitTime = Math.pow(2, retryCount) * 2000; 
         console.warn(`Gemini API Rate Limit hit. Retrying in ${waitTime}ms... (Attempt ${retryCount}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
