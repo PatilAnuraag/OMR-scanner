@@ -3,6 +3,7 @@ export enum PageType {
   VIBE_MATCH = 'Page 2 (VibeMatch)',
   EDU_STATS = 'Page 3 (EduStats)',
   MIX = 'Mix (Auto-Detect)',
+  SEPARATE = 'Separate (3 PDFs)',
 }
 
 export interface StudentInfoData {
